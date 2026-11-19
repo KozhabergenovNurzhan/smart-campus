@@ -1,0 +1,83 @@
+import type { Room, Booking, AvailabilityResult } from '@/types';
+
+export const MAX_BOOKING_DURATION = 120;
+export const MINUTES_PER_DAY = 1440;
+
+export function timeToMinutes(time: string): number {
+  const [h, m] = time.split(':').map(Number);
+  return h * 60 + m;
+}
+
+export function minutesToTime(minutes: number): string {
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+export function formatTimeRange(start: number, end: number): string {
+  return `${minutesToTime(start)} – ${minutesToTime(end)}`;
+}
+
+function intervalsOverlap(s1: number, e1: number, s2: number, e2: number): boolean {
+  // Touching endpoints are allowed: [a,b) and [b,c) do NOT overlap
+  return s1 < e2 && s2 < e1;
+}
+
+export function checkAvailability(
+  room: Room | null,
+  start: number,
+  end: number,
+  currentTime: number,
+  existingBookings: Booking[]
+): AvailabilityResult {
+  const reasons: string[] = [];
+
+  if (!room) {
+    reasons.push('Please select a room.');
+  }
+
+  if (!Number.isFinite(start) || !Number.isFinite(end) || !Number.isFinite(currentTime)) {
+    if (!Number.isFinite(start)) reasons.push('Start time is missing or invalid.');
+    if (!Number.isFinite(end)) reasons.push('End time is missing or invalid.');
+    if (!Number.isFinite(currentTime)) reasons.push('Current time is missing or invalid.');
+    return { available: false, reasons };
+  }
+
+  // AC1: 0 <= start < end <= 1440 and start strictly after current time
+  if (start < 0 || end > MINUTES_PER_DAY) {
+    reasons.push('Time must be between 00:00 and 24:00.');
+  }
+  if (start >= end) {
+    reasons.push('End time must be after start time.');
+  }
+  if (start <= currentTime) {
+    reasons.push(`Start time must be strictly after the current time (${minutesToTime(currentTime)}).`);
+  }
+
+  // AC2: Booking must not exceed 120 minutes
+  const duration = end - start;
+  if (duration > MAX_BOOKING_DURATION) {
+    reasons.push(`Booking duration is ${duration} minutes — maximum allowed is ${MAX_BOOKING_DURATION} minutes.`);
+  }
+
+  // AC3: Room must not be blocked
+  if (room?.blocked) {
+    reasons.push(`This room is blocked: ${room.blockedReason ?? 'unavailable'}.`);
+  }
+
+  // AC4: No overlap with existing bookings (touching endpoints allowed)
+  if (room) {
+    const roomBookings = existingBookings.filter((b) => b.roomId === room.id);
+    for (const booking of roomBookings) {
+      if (intervalsOverlap(start, end, booking.start, booking.end)) {
+        reasons.push(`Overlaps with "${booking.title}" (${formatTimeRange(booking.start, booking.end)}).`);
+      }
+    }
+  }
+
+  // AC5: Return decision without modifying booking data
+  return {
+    available: reasons.length === 0,
+    reasons,
+  };
+}
